@@ -1,0 +1,12 @@
+#vscode
+.vscode
+
+#macos
+.DS_Store
+*.dSYM/
+
+# py
+.venv
+__pycache__/
+*.pyc
+*.pyo
