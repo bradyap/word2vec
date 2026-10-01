@@ -76,7 +76,7 @@ def generate_pairs(tokenized_sentences: list[list[str]], word_to_id: dict[str, i
 
     return pairs
 
-def initialize_embeddings(vocab_size: int, embedding_dim: int, seed: int = 42) -> tuple[NDArray[np.float64], NDArray[np.float4]]:
+def initialize_embeddings(vocab_size: int, embedding_dim: int, seed: int = 42) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Create input and output embedding matrices with random values."""
     if vocab_size < 1:
         raise ValueError("vocab_size must be at least 1")
