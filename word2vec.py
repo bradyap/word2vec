@@ -1,8 +1,8 @@
 import re
-
+import numpy as np
+from numpy.typing import NDArray
 from nltk.tokenize import sent_tokenize
 from collections import Counter
-
 
 def split_sentences(text: str) -> list[str]:
     """Split text into sentences using NLTK."""
@@ -75,3 +75,25 @@ def generate_pairs(tokenized_sentences: list[list[str]], word_to_id: dict[str, i
                 pairs.append((center_id, context_id))
 
     return pairs
+
+def initialize_embeddings(vocab_size: int, embedding_dim: int, seed: int = 42) -> tuple[NDArray[np.float64], NDArray[np.float4]]:
+    """Create input and output embedding matrices with random values."""
+    if vocab_size < 1:
+        raise ValueError("vocab_size must be at least 1")
+
+    if embedding_dim < 1:
+        raise ValueError("embedding_dim must be at least 1")
+
+    rng = np.random.default_rng(seed)
+
+    input_embeddings = rng.normal(loc=0.0, scale=0.1, size=(vocab_size, embedding_dim))
+    output_embeddings = rng.normal(loc=0.0, scale=0.1, size=(vocab_size, embedding_dim))
+
+    return input_embeddings, output_embeddings
+
+def calculate_scores(center_id: int, input_embeddings: NDArray[np.float64], output_embeddings: NDArray[np.float64]):
+    """Calculate context-prediction score for every vocabulary word."""
+    center_vector = input_embeddings[center_id]
+    scores = output_embeddings @ center_vector
+
+    return scores
