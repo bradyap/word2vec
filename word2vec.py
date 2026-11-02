@@ -93,9 +93,26 @@ def initialize_embeddings(vocab_size: int, embedding_dim: int, seed: int = 42) -
 
     return input_embeddings, output_embeddings
 
-def calculate_scores(center_id: int, input_embeddings: NDArray[np.float64], output_embeddings: NDArray[np.float64]):
+def calculate_scores(center_id: int, input_embeddings: NDArray[np.float64], output_embeddings: NDArray[np.float64]) -> NDArray[np.float64]:
     """Calculate context-prediction score for every vocabulary word."""
     center_vector = input_embeddings[center_id]
     scores = output_embeddings @ center_vector
 
     return scores
+
+def softmax(scores: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Convert a 1d array of scores into probabilities."""
+    shifted = scores - np.max(scores)
+    weights = np.exp(shifted)
+    probabilities = weights / np.sum(weights)
+
+    return probabilities
+
+def cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
+    """Calculates cross-entropy loss from scores and the target context ID."""
+    # Calculate using scores to avoid ln(0) = undefined
+    shifted = scores - np.max(scores)
+    weights = np.exp(shifted)
+    loss = np.log(np.sum(weights)) - shifted[context_id]
+
+    return loss
