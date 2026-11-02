@@ -1,8 +1,10 @@
 import re
-import numpy as np
-from numpy.typing import NDArray
-from nltk.tokenize import sent_tokenize
 from collections import Counter
+
+import numpy as np
+from nltk.tokenize import sent_tokenize
+from numpy.typing import NDArray
+
 
 def split_sentences(text: str) -> list[str]:
     """Split text into sentences using NLTK."""
