@@ -16,25 +16,24 @@ def tokenize(text: str) -> list[str]:
     """Convert a string into a list of lowercase words."""
     text = text.lower()
     # Replace curly apostrophes with straight ones
-    text = text.replace("’", "'")
+    text = text.replace('’', "'")
     tokens = re.findall(r"[a-z]+(?:'[a-z]+)*", text)
     return tokens
 
 
-def build_vocab(tokenized_sentences: list[list[str]], min_count: int = 1) -> tuple[dict[int, str], dict[str, int], list[int]]:
+def build_vocab(
+    tokenized_sentences: list[list[str]], min_count: int = 1
+) -> tuple[dict[int, str], dict[str, int], list[int]]:
     """Build word/ID lookup dicts and list of word counts aligned to ID's."""
     if min_count < 1:
-        raise ValueError("min_count must be at least 1")
+        raise ValueError('min_count must be at least 1')
 
     initial_counts: Counter[str] = Counter()
 
     for sentence in tokenized_sentences:
         initial_counts.update(sentence)
 
-    vocab = sorted(
-        word for word, count in initial_counts.items()
-        if count >= min_count
-    )
+    vocab = sorted(word for word, count in initial_counts.items() if count >= min_count)
 
     id_to_word: dict[int, str] = {}
     word_to_id: dict[str, int] = {}
@@ -47,10 +46,15 @@ def build_vocab(tokenized_sentences: list[list[str]], min_count: int = 1) -> tup
 
     return id_to_word, word_to_id, word_counts
 
-def generate_pairs(tokenized_sentences: list[list[str]], word_to_id: dict[str, int], window_size: int = 2) -> list[tuple[int, int]]:
+
+def generate_pairs(
+    tokenized_sentences: list[list[str]],
+    word_to_id: dict[str, int],
+    window_size: int = 2,
+) -> list[tuple[int, int]]:
     """Create (center_word_id, context_word_id) pairs."""
     if window_size < 1:
-        raise ValueError("window_size must be at least 1")
+        raise ValueError('window_size must be at least 1')
 
     pairs: list[tuple[int, int]] = []
 
@@ -78,13 +82,16 @@ def generate_pairs(tokenized_sentences: list[list[str]], word_to_id: dict[str, i
 
     return pairs
 
-def initialize_embeddings(vocab_size: int, embedding_dim: int, seed: int = 42) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+
+def initialize_embeddings(
+    vocab_size: int, embedding_dim: int, seed: int = 42
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Create input and output embedding matrices with random values."""
     if vocab_size < 1:
-        raise ValueError("vocab_size must be at least 1")
+        raise ValueError('vocab_size must be at least 1')
 
     if embedding_dim < 1:
-        raise ValueError("embedding_dim must be at least 1")
+        raise ValueError('embedding_dim must be at least 1')
 
     rng = np.random.default_rng(seed)
 
@@ -93,12 +100,18 @@ def initialize_embeddings(vocab_size: int, embedding_dim: int, seed: int = 42) -
 
     return input_embeddings, output_embeddings
 
-def calculate_scores(center_id: int, input_embeddings: NDArray[np.float64], output_embeddings: NDArray[np.float64]) -> NDArray[np.float64]:
+
+def calculate_scores(
+    center_id: int,
+    input_embeddings: NDArray[np.float64],
+    output_embeddings: NDArray[np.float64],
+) -> NDArray[np.float64]:
     """Calculate context-prediction score for every vocabulary word."""
     center_vector = input_embeddings[center_id]
     scores = output_embeddings @ center_vector
 
     return scores
+
 
 def softmax(scores: NDArray[np.float64]) -> NDArray[np.float64]:
     """Convert a 1d array of scores into probabilities."""
@@ -108,6 +121,7 @@ def softmax(scores: NDArray[np.float64]) -> NDArray[np.float64]:
 
     return probabilities
 
+
 def cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
     """Calculates cross-entropy loss from scores and the target context ID."""
     # Calculate using scores to avoid ln(0) = undefined
@@ -116,3 +130,19 @@ def cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
     loss = np.log(np.sum(weights)) - shifted[context_id]
 
     return loss
+
+
+def backward(
+    probabilities: NDArray[np.float64],
+    context_id: int,
+    center_vector: NDArray[np.float64],
+    output_embeddings: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Return gradients for the center vector and output embedding matrix."""
+    score_gradients = probabilities.copy()
+    score_gradients[context_id] -= 1.0
+
+    output_gradients = np.outer(score_gradients, center_vector)
+    center_gradient = output_embeddings.T @ score_gradients
+
+    return center_gradient, output_gradients
