@@ -129,7 +129,7 @@ def cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
     weights = np.exp(shifted)
     loss = np.log(np.sum(weights)) - shifted[context_id]
 
-    return loss
+    return float(loss)
 
 
 def backward(
@@ -146,3 +146,53 @@ def backward(
     center_gradient = output_embeddings.T @ score_gradients
 
     return center_gradient, output_gradients
+
+
+def train(
+    pairs: list[tuple[int, int]],
+    vocab_size: int,
+    embedding_dim: int,
+    epochs: int = 100,
+    learning_rate: float = 0.01,
+    seed: int = 42,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], list[float]]:
+    """Train embeddings and return both matrices and epoch losses."""
+    input_embeddings, output_embeddings = initialize_embeddings(
+        vocab_size, embedding_dim, seed
+    )
+
+    rng = np.random.default_rng(seed)
+    loss_history: list[float] = []
+
+    for epoch in range(epochs):
+        total_loss = 0.0
+
+        # Shuffle each epoch to help converge more reliably
+        # Helps minimize effects from repeatedly updating on pairs in the same order
+        pair_order = rng.permutation(len(pairs))
+
+        for i in pair_order:
+            center_id, context_id = pairs[i]
+
+            # Forward pass
+            center_vector = input_embeddings[center_id]
+            scores = calculate_scores(center_id, input_embeddings, output_embeddings)
+            probabilities = softmax(scores)
+
+            # Record loss
+            loss = cross_entropy(scores, context_id)
+            total_loss += loss
+
+            # Calculate gradients
+            center_gradient, output_gradients = backward(
+                probabilities, context_id, center_vector, output_embeddings
+            )
+
+            # Gradient descent update
+            input_embeddings[center_id] -= learning_rate * center_gradient
+            output_embeddings -= learning_rate * output_gradients
+
+        avg_loss = total_loss / len(pairs)
+        loss_history.append(avg_loss)
+
+    return input_embeddings, output_embeddings, loss_history
