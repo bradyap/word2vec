@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 
 def split_sentences(text: str) -> list[str]:
     """Split text into sentences using NLTK."""
+    # Wrap NLTK's sentence tokenizer so I can experiment with a custom implementation later
     sentences = sent_tokenize(text)
     return sentences
 
@@ -15,19 +16,15 @@ def split_sentences(text: str) -> list[str]:
 def tokenize(text: str) -> list[str]:
     """Convert a string into a list of lowercase words."""
     text = text.lower()
-    # Replace curly apostrophes with straight ones
-    text = text.replace('’', "'")
+    text = text.replace('’', "'")  # Normalize curly apostrophes
     tokens = re.findall(r"[a-z]+(?:'[a-z]+)*", text)
     return tokens
 
 
 def build_vocab(
     tokenized_sentences: list[list[str]], min_count: int = 1
-) -> tuple[dict[int, str], dict[str, int], list[int]]:
+) -> tuple[dict[str, int], dict[int, str], list[int]]:
     """Build word/ID lookup dicts and list of word counts aligned to ID's."""
-    if min_count < 1:
-        raise ValueError('min_count must be at least 1')
-
     initial_counts: Counter[str] = Counter()
 
     for sentence in tokenized_sentences:
@@ -44,7 +41,7 @@ def build_vocab(
         word_to_id[word] = word_id
         word_counts.append(initial_counts[word])
 
-    return id_to_word, word_to_id, word_counts
+    return word_to_id, id_to_word, word_counts
 
 
 def generate_pairs(
@@ -53,9 +50,6 @@ def generate_pairs(
     window_size: int = 2,
 ) -> list[tuple[int, int]]:
     """Create (center_word_id, context_word_id) pairs."""
-    if window_size < 1:
-        raise ValueError('window_size must be at least 1')
-
     pairs: list[tuple[int, int]] = []
 
     for sentence in tokenized_sentences:
@@ -83,116 +77,115 @@ def generate_pairs(
     return pairs
 
 
-def initialize_embeddings(
-    vocab_size: int, embedding_dim: int, seed: int = 42
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Create input and output embedding matrices with random values."""
-    if vocab_size < 1:
-        raise ValueError('vocab_size must be at least 1')
+class Word2Vec:
+    """Skip-gram model implemented with NumPy."""
 
-    if embedding_dim < 1:
-        raise ValueError('embedding_dim must be at least 1')
+    def __init__(
+        self,
+        vocab_size: int,
+        embedding_dim: int,
+        word_to_id: dict[str, int],
+        id_to_word: dict[int, str],
+        learning_rate: float = 0.01,
+        seed: int = 42,
+    ) -> None:
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.word_to_id = word_to_id.copy()
+        self.id_to_word = id_to_word.copy()
+        self.learning_rate = learning_rate
+        self.seed = seed
+        self.input_embeddings, self.output_embeddings = self._initialize_embeddings()
+        self.rng = np.random.default_rng(seed)
+        self.loss_history: list[float] = []
 
-    rng = np.random.default_rng(seed)
+    def _initialize_embeddings(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Create input and output embedding matrices with random values."""
+        rng = np.random.default_rng(self.seed)
 
-    input_embeddings = rng.normal(loc=0.0, scale=0.1, size=(vocab_size, embedding_dim))
-    output_embeddings = rng.normal(loc=0.0, scale=0.1, size=(vocab_size, embedding_dim))
+        input_embeddings = rng.normal(
+            loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
+        )
+        output_embeddings = rng.normal(
+            loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
+        )
 
-    return input_embeddings, output_embeddings
+        return input_embeddings, output_embeddings
 
+    def calculate_scores(self, center_id: int) -> NDArray[np.float64]:
+        """Calculate context-prediction score for every vocabulary word."""
+        center_vector = self.input_embeddings[center_id]
+        scores = self.output_embeddings @ center_vector
 
-def calculate_scores(
-    center_id: int,
-    input_embeddings: NDArray[np.float64],
-    output_embeddings: NDArray[np.float64],
-) -> NDArray[np.float64]:
-    """Calculate context-prediction score for every vocabulary word."""
-    center_vector = input_embeddings[center_id]
-    scores = output_embeddings @ center_vector
+        return scores
 
-    return scores
+    @staticmethod
+    def softmax(scores: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Convert a 1d array of scores into probabilities."""
+        shifted = scores - np.max(scores)
+        weights = np.exp(shifted)
+        probabilities = weights / np.sum(weights)
 
+        return probabilities
 
-def softmax(scores: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Convert a 1d array of scores into probabilities."""
-    shifted = scores - np.max(scores)
-    weights = np.exp(shifted)
-    probabilities = weights / np.sum(weights)
+    @staticmethod
+    def cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
+        """Calculates cross-entropy loss from scores and the target context ID."""
+        # Calculate using scores to avoid ln(0) = undefined
+        shifted = scores - np.max(scores)
+        weights = np.exp(shifted)
+        loss = np.log(np.sum(weights)) - shifted[context_id]
 
-    return probabilities
+        return float(loss)
 
+    def backward(
+        self,
+        probabilities: NDArray[np.float64],
+        context_id: int,
+        center_vector: NDArray[np.float64],
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Return gradients for the center vector and output embedding matrix."""
+        score_gradients = probabilities.copy()
+        score_gradients[context_id] -= 1.0
 
-def cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
-    """Calculates cross-entropy loss from scores and the target context ID."""
-    # Calculate using scores to avoid ln(0) = undefined
-    shifted = scores - np.max(scores)
-    weights = np.exp(shifted)
-    loss = np.log(np.sum(weights)) - shifted[context_id]
+        output_gradients = np.outer(score_gradients, center_vector)
+        center_gradient = self.output_embeddings.T @ score_gradients
 
-    return float(loss)
+        return center_gradient, output_gradients
 
+    def train(
+        self, pairs: list[tuple[int, int]], epochs: int = 100
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64], list[float]]:
+        """Train embeddings and return both matrices and epoch losses."""
+        for epoch in range(epochs):
+            total_loss = 0.0
 
-def backward(
-    probabilities: NDArray[np.float64],
-    context_id: int,
-    center_vector: NDArray[np.float64],
-    output_embeddings: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Return gradients for the center vector and output embedding matrix."""
-    score_gradients = probabilities.copy()
-    score_gradients[context_id] -= 1.0
+            # Shuffle each epoch to help converge more reliably
+            # Helps minimize effects from repeatedly updating on pairs in the same order
+            pair_order = self.rng.permutation(len(pairs))
 
-    output_gradients = np.outer(score_gradients, center_vector)
-    center_gradient = output_embeddings.T @ score_gradients
+            for i in pair_order:
+                center_id, context_id = pairs[i]
 
-    return center_gradient, output_gradients
+                # Forward pass
+                center_vector = self.input_embeddings[center_id]
+                scores = self.calculate_scores(center_id)
+                probabilities = self.softmax(scores)
 
+                # Record loss
+                loss = self.cross_entropy(scores, context_id)
+                total_loss += loss
 
-def train(
-    pairs: list[tuple[int, int]],
-    vocab_size: int,
-    embedding_dim: int,
-    epochs: int = 100,
-    learning_rate: float = 0.01,
-    seed: int = 42,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], list[float]]:
-    """Train embeddings and return both matrices and epoch losses."""
-    input_embeddings, output_embeddings = initialize_embeddings(
-        vocab_size, embedding_dim, seed
-    )
+                # Calculate gradients
+                center_gradient, output_gradients = self.backward(
+                    probabilities, context_id, center_vector
+                )
 
-    rng = np.random.default_rng(seed)
-    loss_history: list[float] = []
+                # Gradient descent update
+                self.input_embeddings[center_id] -= self.learning_rate * center_gradient
+                self.output_embeddings -= self.learning_rate * output_gradients
 
-    for epoch in range(epochs):
-        total_loss = 0.0
+            avg_loss = total_loss / len(pairs)
+            self.loss_history.append(avg_loss)
 
-        # Shuffle each epoch to help converge more reliably
-        # Helps minimize effects from repeatedly updating on pairs in the same order
-        pair_order = rng.permutation(len(pairs))
-
-        for i in pair_order:
-            center_id, context_id = pairs[i]
-
-            # Forward pass
-            center_vector = input_embeddings[center_id]
-            scores = calculate_scores(center_id, input_embeddings, output_embeddings)
-            probabilities = softmax(scores)
-
-            # Record loss
-            loss = cross_entropy(scores, context_id)
-            total_loss += loss
-
-            # Calculate gradients
-            center_gradient, output_gradients = backward(
-                probabilities, context_id, center_vector, output_embeddings
-            )
-
-            # Gradient descent update
-            input_embeddings[center_id] -= learning_rate * center_gradient
-            output_embeddings -= learning_rate * output_gradients
-
-        avg_loss = total_loss / len(pairs)
-        loss_history.append(avg_loss)
-
-    return input_embeddings, output_embeddings, loss_history
+        return self.input_embeddings, self.output_embeddings, self.loss_history
