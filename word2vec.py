@@ -24,7 +24,7 @@ def tokenize(text: str) -> list[str]:
 def build_vocab(
     tokenized_sentences: list[list[str]], min_count: int = 1
 ) -> tuple[dict[str, int], dict[int, str], list[int]]:
-    """Build word/ID lookup dicts and list of word counts aligned to ID's."""
+    """Build word/ID lookup dicts and list of word counts aligned to IDs."""
     initial_counts: Counter[str] = Counter()
 
     for sentence in tokenized_sentences:
@@ -42,6 +42,25 @@ def build_vocab(
         word_counts.append(initial_counts[word])
 
     return word_to_id, id_to_word, word_counts
+
+
+def vocab_coverage(
+    tokenized_sentences: list[list[str]], word_to_id: dict[str, int]
+) -> tuple[float, float]:
+    """Return (token coverage, type coverage) as fractions."""
+    tokens = []
+
+    for sentence in tokenized_sentences:
+        tokens.extend(sentence)
+
+    known_token_count = [word in word_to_id for word in tokens]
+    token_coverage = sum(known_token_count) / len(tokens)
+
+    unique_words = set(tokens)
+    known_type_count = [word in word_to_id for word in unique_words]
+    type_coverage = sum(known_type_count) / len(unique_words)
+
+    return token_coverage, type_coverage
 
 
 def generate_pairs(
@@ -77,25 +96,6 @@ def generate_pairs(
     return pairs
 
 
-def vocab_coverage(
-    tokenized_sentences: list[list[str]], word_to_id: dict[str, int]
-) -> tuple[float, float]:
-    """Return (token coverage, type coverage) as fractions."""
-    tokens = []
-
-    for sentence in tokenized_sentences:
-        tokens.extend(sentence)
-
-    known_tokens = [word in word_to_id for word in tokens]
-    token_coverage = sum(known_tokens) / len(tokens)
-
-    unique_words = set(tokens)
-    known_types = [word in word_to_id for word in unique_words]
-    type_coverage = sum(known_types) / len(unique_words)
-
-    return token_coverage, type_coverage
-
-
 class Word2Vec:
     """Skip-gram model implemented with NumPy."""
 
@@ -127,7 +127,7 @@ class Word2Vec:
 
         return input_embeddings, output_embeddings
 
-    def calculate_scores(self, center_id: int) -> NDArray[np.float64]:
+    def _calculate_scores(self, center_id: int) -> NDArray[np.float64]:
         """Calculate context-prediction score for every vocabulary word."""
         center_vector = self.input_embeddings[center_id]
         scores = self.output_embeddings @ center_vector
@@ -135,7 +135,7 @@ class Word2Vec:
         return scores
 
     @staticmethod
-    def softmax(scores: NDArray[np.float64]) -> NDArray[np.float64]:
+    def _softmax(scores: NDArray[np.float64]) -> NDArray[np.float64]:
         """Convert a 1d array of scores into probabilities."""
         shifted = scores - np.max(scores)
         weights = np.exp(shifted)
@@ -144,8 +144,8 @@ class Word2Vec:
         return probabilities
 
     @staticmethod
-    def cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
-        """Calculates cross-entropy loss from scores and the target context ID."""
+    def _cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
+        """Calculate cross-entropy loss from scores and the target context ID."""
         # Calculate using scores to avoid ln(0) = undefined
         shifted = scores - np.max(scores)
         weights = np.exp(shifted)
@@ -153,7 +153,17 @@ class Word2Vec:
 
         return float(loss)
 
-    def backward(
+    def evaluate(self, pairs: list[tuple[int, int]]) -> float:
+        """Return average cross-entropy for given pairs."""
+        total_loss = 0.0
+
+        for center_id, context_id in pairs:
+            scores = self._calculate_scores(center_id)
+            total_loss += self._cross_entropy(scores, context_id)
+
+        return total_loss / len(pairs)
+
+    def _backward(
         self,
         probabilities: NDArray[np.float64],
         context_id: int,
@@ -168,16 +178,6 @@ class Word2Vec:
 
         return center_gradient, output_gradients
 
-    def evaluate(self, pairs: list[tuple[int, int]]) -> float:
-        """Return average cross-entropy for given pairs."""
-        total_loss = 0.0
-
-        for center_id, context_id in pairs:
-            scores = self.calculate_scores(center_id)
-            total_loss += self.cross_entropy(scores, context_id)
-
-        return total_loss / len(pairs)
-
     def train(
         self,
         train_pairs: list[tuple[int, int]],
@@ -185,14 +185,18 @@ class Word2Vec:
         epochs: int = 100,
         restore_best_weights: bool = False,
     ) -> tuple[list[float], list[float]]:
-        """Train embeddings and return train and validation loss histories."""
+        """Train embeddings and return train and validation loss histories.
+
+        Training loss is averaged during each epoch as weights are updated.
+        Validation loss is computed using the weights at the end of each epoch.
+        """
         train_loss_history: list[float] = []
         val_loss_history: list[float] = []
 
         best_val_loss = float('inf')
         best_embeddings = None
 
-        for epoch in range(epochs):
+        for _ in range(epochs):
             total_loss = 0.0
 
             # Shuffle each epoch to help converge more reliably
@@ -204,14 +208,14 @@ class Word2Vec:
 
                 # Forward pass
                 center_vector = self.input_embeddings[center_id]
-                scores = self.calculate_scores(center_id)
-                probabilities = self.softmax(scores)
+                scores = self._calculate_scores(center_id)
+                probabilities = self._softmax(scores)
 
                 # Record loss
-                total_loss += self.cross_entropy(scores, context_id)
+                total_loss += self._cross_entropy(scores, context_id)
 
                 # Calculate gradients
-                center_gradient, output_gradients = self.backward(
+                center_gradient, output_gradients = self._backward(
                     probabilities, context_id, center_vector
                 )
 
