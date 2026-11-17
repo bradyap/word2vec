@@ -77,6 +77,25 @@ def generate_pairs(
     return pairs
 
 
+def vocab_coverage(
+    tokenized_sentences: list[list[str]], word_to_id: dict[str, int]
+) -> tuple[float, float]:
+    """Return (token coverage, type coverage) as fractions."""
+    tokens = []
+
+    for sentence in tokenized_sentences:
+        tokens.extend(sentence)
+
+    known_tokens = [word in word_to_id for word in tokens]
+    token_coverage = sum(known_tokens) / len(tokens)
+
+    unique_words = set(tokens)
+    known_types = [word in word_to_id for word in unique_words]
+    type_coverage = sum(known_types) / len(unique_words)
+
+    return token_coverage, type_coverage
+
+
 class Word2Vec:
     """Skip-gram model implemented with NumPy."""
 
