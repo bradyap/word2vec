@@ -150,8 +150,18 @@ class Word2Vec:
 
         return center_gradient, output_gradients
 
+    def evaluate(self, pairs: list[tuple[int, int]]) -> float:
+        """Return average cross-entropy for given pairs."""
+        total_loss = 0.0
+
+        for center_id, context_id in pairs:
+            scores = self.calculate_scores(center_id)
+            total_loss += self.cross_entropy(scores, context_id)
+
+        return total_loss / len(pairs)
+
     def train(
-        self, pairs: list[tuple[int, int]], epochs: int = 100
+        self, train_pairs: list[tuple[int, int]], epochs: int = 100
     ) -> tuple[NDArray[np.float64], NDArray[np.float64], list[float]]:
         """Train embeddings and return both matrices and epoch losses."""
         for epoch in range(epochs):
@@ -159,10 +169,10 @@ class Word2Vec:
 
             # Shuffle each epoch to help converge more reliably
             # Helps minimize effects from repeatedly updating on pairs in the same order
-            pair_order = self.rng.permutation(len(pairs))
+            pair_order = self.rng.permutation(len(train_pairs))
 
             for i in pair_order:
-                center_id, context_id = pairs[i]
+                center_id, context_id = train_pairs[i]
 
                 # Forward pass
                 center_vector = self.input_embeddings[center_id]
@@ -182,7 +192,7 @@ class Word2Vec:
                 self.input_embeddings[center_id] -= self.learning_rate * center_gradient
                 self.output_embeddings -= self.learning_rate * output_gradients
 
-            avg_loss = total_loss / len(pairs)
+            avg_loss = total_loss / len(train_pairs)
             self.loss_history.append(avg_loss)
 
         return self.input_embeddings, self.output_embeddings, self.loss_history
