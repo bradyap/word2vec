@@ -115,7 +115,6 @@ class Word2Vec:
 
         self.vocab_size = len(self.word_to_id)
         self.input_embeddings, self.output_embeddings = self._initialize_embeddings()
-        self.loss_history: list[float] = []
 
     def _initialize_embeddings(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Create input and output embedding matrices with random values."""
@@ -180,9 +179,19 @@ class Word2Vec:
         return total_loss / len(pairs)
 
     def train(
-        self, train_pairs: list[tuple[int, int]], epochs: int = 100
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64], list[float]]:
-        """Train embeddings and return both matrices and epoch losses."""
+        self,
+        train_pairs: list[tuple[int, int]],
+        val_pairs: list[tuple[int, int]],
+        epochs: int = 100,
+        restore_best_weights: bool = False,
+    ) -> tuple[list[float], list[float]]:
+        """Train embeddings and return train and validation loss histories."""
+        train_loss_history: list[float] = []
+        val_loss_history: list[float] = []
+
+        best_val_loss = float('inf')
+        best_embeddings = None
+
         for epoch in range(epochs):
             total_loss = 0.0
 
@@ -199,8 +208,7 @@ class Word2Vec:
                 probabilities = self.softmax(scores)
 
                 # Record loss
-                loss = self.cross_entropy(scores, context_id)
-                total_loss += loss
+                total_loss += self.cross_entropy(scores, context_id)
 
                 # Calculate gradients
                 center_gradient, output_gradients = self.backward(
@@ -211,7 +219,22 @@ class Word2Vec:
                 self.input_embeddings[center_id] -= self.learning_rate * center_gradient
                 self.output_embeddings -= self.learning_rate * output_gradients
 
-            avg_loss = total_loss / len(train_pairs)
-            self.loss_history.append(avg_loss)
+            train_loss = total_loss / len(train_pairs)
+            val_loss = self.evaluate(val_pairs)
 
-        return self.input_embeddings, self.output_embeddings, self.loss_history
+            train_loss_history.append(train_loss)
+            val_loss_history.append(val_loss)
+
+            # Save weights with lowest val loss if desired
+            if restore_best_weights and val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_embeddings = (
+                    self.input_embeddings.copy(),
+                    self.output_embeddings.copy(),
+                )
+
+        # Restore best epoch's weights if desired
+        if restore_best_weights and best_embeddings is not None:
+            self.input_embeddings, self.output_embeddings = best_embeddings
+
+        return train_loss_history, val_loss_history
