@@ -82,31 +82,28 @@ class Word2Vec:
 
     def __init__(
         self,
-        vocab_size: int,
-        embedding_dim: int,
         word_to_id: dict[str, int],
         id_to_word: dict[int, str],
+        embedding_dim: int,
         learning_rate: float = 0.01,
         seed: int = 42,
     ) -> None:
-        self.vocab_size = vocab_size
-        self.embedding_dim = embedding_dim
         self.word_to_id = word_to_id.copy()
         self.id_to_word = id_to_word.copy()
+        self.embedding_dim = embedding_dim
         self.learning_rate = learning_rate
-        self.seed = seed
-        self.input_embeddings, self.output_embeddings = self._initialize_embeddings()
         self.rng = np.random.default_rng(seed)
+
+        self.vocab_size = len(self.word_to_id)
+        self.input_embeddings, self.output_embeddings = self._initialize_embeddings()
         self.loss_history: list[float] = []
 
     def _initialize_embeddings(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Create input and output embedding matrices with random values."""
-        rng = np.random.default_rng(self.seed)
-
-        input_embeddings = rng.normal(
+        input_embeddings = self.rng.normal(
             loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
         )
-        output_embeddings = rng.normal(
+        output_embeddings = self.rng.normal(
             loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
         )
 

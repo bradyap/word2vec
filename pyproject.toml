@@ -11,4 +11,5 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ipykernel>=7.4.0",
+    "notebook>=7.6.5",
 ]
