@@ -21,6 +21,28 @@ def tokenize(text: str) -> list[str]:
     return tokens
 
 
+def random_split(
+    tokenized_sentences: list[list[str]], split_at: tuple[float, ...], seed: int = 42
+) -> list[list[list[str]]]:
+    """Shuffle tokenized sentences and split them at given fractions."""
+    size = len(tokenized_sentences)
+
+    rng = np.random.default_rng(seed)
+    indices = rng.permutation(size)
+    shuffled_sentences = [tokenized_sentences[i] for i in indices]
+
+    splits: list[list[list[str]]] = []
+    start = 0
+
+    for frac in split_at:
+        end = int(frac * size)
+        splits.append(shuffled_sentences[start:end])
+        start = end
+
+    splits.append(shuffled_sentences[start:])
+    return splits
+
+
 def build_vocab(
     tokenized_sentences: list[list[str]], min_count: int = 1
 ) -> tuple[dict[str, int], dict[int, str], list[int]]:
