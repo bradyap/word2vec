@@ -146,106 +146,6 @@ class Word2Vec:
         self.vocab_size = len(self.word_to_id)
         self.input_embeddings, self.output_embeddings = self._initialize_embeddings()
 
-    def _initialize_embeddings(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Create input and output embedding matrices with random values."""
-        input_embeddings = self.rng.normal(
-            loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
-        )
-        output_embeddings = self.rng.normal(
-            loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
-        )
-
-        return input_embeddings, output_embeddings
-
-    def _calculate_scores(self, center_id: int) -> NDArray[np.float64]:
-        """Calculate context-prediction score for every vocabulary word."""
-        center_vector = self.input_embeddings[center_id]
-        scores = self.output_embeddings @ center_vector
-
-        return scores
-
-    @staticmethod
-    def _softmax(scores: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Convert a 1d array of scores into probabilities."""
-        shifted = scores - np.max(scores)
-        weights = np.exp(shifted)
-        probabilities = weights / np.sum(weights)
-
-        return probabilities
-
-    @staticmethod
-    def _cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
-        """Calculate cross-entropy loss from scores and the target context ID."""
-        # Calculate using scores to avoid ln(0) = undefined
-        shifted = scores - np.max(scores)
-        weights = np.exp(shifted)
-        loss = np.log(np.sum(weights)) - shifted[context_id]
-
-        return float(loss)
-
-    def evaluate(self, pairs: list[tuple[int, int]]) -> float:
-        """Return average cross-entropy for given pairs."""
-        total_loss = 0.0
-
-        for center_id, context_id in pairs:
-            scores = self._calculate_scores(center_id)
-            total_loss += self._cross_entropy(scores, context_id)
-
-        return total_loss / len(pairs)
-
-    def cosine_similarity(self, word_a: str, word_b: str):
-        """Return cosine similarity between two words' input embeddings."""
-        vec_a = self.input_embeddings[self.word_to_id[word_a]]
-        vec_b = self.input_embeddings[self.word_to_id[word_b]]
-
-        norm_a = np.linalg.norm(vec_a)
-        norm_b = np.linalg.norm(vec_b)
-
-        return float((vec_a @ vec_b) / (norm_a * norm_b))
-
-    def most_similar(self, word: str, k: int = 5):
-        """Return k (word, similarity) pairs, highest similarity first."""
-        neighbors = []
-        for candidate in self.word_to_id:
-            if candidate == word:
-                continue
-
-            score = self.cosine_similarity(word, candidate)
-            neighbors.append((candidate, score))
-
-        neighbors.sort(key=lambda pair: pair[1], reverse=True)
-        return neighbors[:k]
-
-    def predict_context(self, center_word: str, k: int = 5):
-        """Return k (context word, probability) pairs, highest probability first."""
-        center_id = self.word_to_id[center_word]
-        scores = self._calculate_scores(center_id)
-        probabilities = self._softmax(scores)
-        top_ids = np.argsort(-scores)[:k]
-
-        predictions = []
-        for word_id in top_ids:
-            word = self.id_to_word[word_id]
-            probability = float(probabilities[word_id])
-            predictions.append((word, probability))
-
-        return predictions
-
-    def _backward(
-        self,
-        probabilities: NDArray[np.float64],
-        context_id: int,
-        center_vector: NDArray[np.float64],
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Return gradients for the center vector and output embedding matrix."""
-        score_gradients = probabilities.copy()
-        score_gradients[context_id] -= 1.0
-
-        output_gradients = np.outer(score_gradients, center_vector)
-        center_gradient = self.output_embeddings.T @ score_gradients
-
-        return center_gradient, output_gradients
-
     def train(
         self,
         train_pairs: list[tuple[int, int]],
@@ -276,7 +176,7 @@ class Word2Vec:
 
                 # Forward pass
                 center_vector = self.input_embeddings[center_id]
-                scores = self._calculate_scores(center_id)
+                scores = self._context_scores(center_id)
                 probabilities = self._softmax(scores)
 
                 # Record loss
@@ -310,3 +210,103 @@ class Word2Vec:
             self.input_embeddings, self.output_embeddings = best_embeddings
 
         return train_loss_history, val_loss_history
+
+    def evaluate(self, pairs: list[tuple[int, int]]) -> float:
+        """Return average cross-entropy for given pairs."""
+        total_loss = 0.0
+
+        for center_id, context_id in pairs:
+            scores = self._context_scores(center_id)
+            total_loss += self._cross_entropy(scores, context_id)
+
+        return total_loss / len(pairs)
+
+    def cosine_similarity(self, word_a: str, word_b: str) -> float:
+        """Return cosine similarity between two words' input embeddings."""
+        vec_a = self.input_embeddings[self.word_to_id[word_a]]
+        vec_b = self.input_embeddings[self.word_to_id[word_b]]
+
+        norm_a = np.linalg.norm(vec_a)
+        norm_b = np.linalg.norm(vec_b)
+
+        return float((vec_a @ vec_b) / (norm_a * norm_b))
+
+    def most_similar(self, word: str, k: int = 5) -> list[tuple[str, float]]:
+        """Return k (word, similarity) pairs, highest similarity first."""
+        neighbors = []
+        for candidate in self.word_to_id:
+            if candidate == word:
+                continue
+
+            score = self.cosine_similarity(word, candidate)
+            neighbors.append((candidate, score))
+
+        neighbors.sort(key=lambda pair: pair[1], reverse=True)
+        return neighbors[:k]
+
+    def predict_context(self, center_word: str, k: int = 5) -> list[tuple[str, float]]:
+        """Return k (context word, probability) pairs, highest probability first."""
+        center_id = self.word_to_id[center_word]
+        scores = self._context_scores(center_id)
+        probabilities = self._softmax(scores)
+        top_ids = np.argsort(-scores)[:k]
+
+        predictions = []
+        for word_id in top_ids:
+            word = self.id_to_word[word_id]
+            probability = float(probabilities[word_id])
+            predictions.append((word, probability))
+
+        return predictions
+
+    def _initialize_embeddings(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Create input and output embedding matrices with random values."""
+        input_embeddings = self.rng.normal(
+            loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
+        )
+        output_embeddings = self.rng.normal(
+            loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
+        )
+
+        return input_embeddings, output_embeddings
+
+    def _context_scores(self, center_id: int) -> NDArray[np.float64]:
+        """Calculate context-prediction score for every vocabulary word."""
+        center_vector = self.input_embeddings[center_id]
+        scores = self.output_embeddings @ center_vector
+
+        return scores
+
+    @staticmethod
+    def _softmax(scores: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Convert a 1d array of scores into probabilities."""
+        shifted = scores - np.max(scores)
+        weights = np.exp(shifted)
+        probabilities = weights / np.sum(weights)
+
+        return probabilities
+
+    @staticmethod
+    def _cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
+        """Calculate cross-entropy loss from scores and the target context ID."""
+        # Calculate using scores to avoid ln(0) = undefined
+        shifted = scores - np.max(scores)
+        weights = np.exp(shifted)
+        loss = np.log(np.sum(weights)) - shifted[context_id]
+
+        return float(loss)
+
+    def _backward(
+        self,
+        probabilities: NDArray[np.float64],
+        context_id: int,
+        center_vector: NDArray[np.float64],
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Return gradients for the center vector and output embedding matrix."""
+        score_gradients = probabilities.copy()
+        score_gradients[context_id] -= 1.0
+
+        output_gradients = np.outer(score_gradients, center_vector)
+        center_gradient = self.output_embeddings.T @ score_gradients
+
+        return center_gradient, output_gradients
