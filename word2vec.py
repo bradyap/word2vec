@@ -118,6 +118,14 @@ def generate_pairs(
     return pairs
 
 
+def pca_2d(vectors: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Return 2d PCA coordinates for each word vector."""
+    centered = vectors - vectors.mean(axis=0)
+    _, _, directions = np.linalg.svd(centered, full_matrices=False)
+    axes = directions[:2].T
+    return centered @ axes
+
+
 class Word2Vec:
     """Skip-gram model implemented with NumPy."""
 
