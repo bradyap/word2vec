@@ -185,6 +185,44 @@ class Word2Vec:
 
         return total_loss / len(pairs)
 
+    def cosine_similarity(self, word_a: str, word_b: str):
+        """Return cosine similarity between two words' input embeddings."""
+        vec_a = self.input_embeddings[self.word_to_id[word_a]]
+        vec_b = self.input_embeddings[self.word_to_id[word_b]]
+
+        norm_a = np.linalg.norm(vec_a)
+        norm_b = np.linalg.norm(vec_b)
+
+        return float((vec_a @ vec_b) / (norm_a * norm_b))
+
+    def most_similar(self, word: str, k: int = 5):
+        """Return k (word, similarity) pairs, highest similarity first."""
+        neighbors = []
+        for candidate in self.word_to_id:
+            if candidate == word:
+                continue
+
+            score = self.cosine_similarity(word, candidate)
+            neighbors.append((candidate, score))
+
+        neighbors.sort(key=lambda pair: pair[1], reverse=True)
+        return neighbors[:k]
+
+    def predict_context(self, center_word: str, k: int = 5):
+        """Return k (context word, probability) pairs, highest probability first."""
+        center_id = self.word_to_id[center_word]
+        scores = self._calculate_scores(center_id)
+        probabilities = self._softmax(scores)
+        top_ids = np.argsort(-scores)[:k]
+
+        predictions = []
+        for word_id in top_ids:
+            word = self.id_to_word[word_id]
+            probability = float(probabilities[word_id])
+            predictions.append((word, probability))
+
+        return predictions
+
     def _backward(
         self,
         probabilities: NDArray[np.float64],
