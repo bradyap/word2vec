@@ -118,12 +118,12 @@ def generate_pairs(
     return pairs
 
 
-def pca_2d(vectors: NDArray[np.float64]) -> NDArray[np.float64]:
+def pca_2d(vectors: NDArray[np.float32]) -> NDArray[np.float32]:
     """Return 2d PCA coordinates for each word vector."""
     centered = vectors - vectors.mean(axis=0)
     _, _, directions = np.linalg.svd(centered, full_matrices=False)
     axes = directions[:2].T
-    return centered @ axes
+    return (centered @ axes).astype(np.float32)
 
 
 class Word2Vec:
@@ -259,18 +259,18 @@ class Word2Vec:
 
         return predictions
 
-    def _initialize_embeddings(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    def _initialize_embeddings(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
         """Create input and output embedding matrices with random values."""
         input_embeddings = self.rng.normal(
             loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
-        )
+        ).astype(np.float32)
         output_embeddings = self.rng.normal(
             loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
-        )
+        ).astype(np.float32)
 
         return input_embeddings, output_embeddings
 
-    def _context_scores(self, center_id: int) -> NDArray[np.float64]:
+    def _context_scores(self, center_id: int) -> NDArray[np.float32]:
         """Calculate context-prediction score for every vocabulary word."""
         center_vector = self.input_embeddings[center_id]
         scores = self.output_embeddings @ center_vector
@@ -278,7 +278,7 @@ class Word2Vec:
         return scores
 
     @staticmethod
-    def _softmax(scores: NDArray[np.float64]) -> NDArray[np.float64]:
+    def _softmax(scores: NDArray[np.float32]) -> NDArray[np.float32]:
         """Convert a 1d array of scores into probabilities."""
         shifted = scores - np.max(scores)
         weights = np.exp(shifted)
@@ -287,7 +287,7 @@ class Word2Vec:
         return probabilities
 
     @staticmethod
-    def _cross_entropy(scores: NDArray[np.float64], context_id: int) -> float:
+    def _cross_entropy(scores: NDArray[np.float32], context_id: int) -> float:
         """Calculate cross-entropy loss from scores and the target context ID."""
         # Calculate using scores to avoid ln(0) = undefined
         shifted = scores - np.max(scores)
@@ -298,10 +298,10 @@ class Word2Vec:
 
     def _backward(
         self,
-        probabilities: NDArray[np.float64],
+        probabilities: NDArray[np.float32],
         context_id: int,
-        center_vector: NDArray[np.float64],
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        center_vector: NDArray[np.float32],
+    ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
         """Return gradients for the center vector and output embedding matrix."""
         score_gradients = probabilities.copy()
         score_gradients[context_id] -= 1.0
