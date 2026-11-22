@@ -134,13 +134,11 @@ class Word2Vec:
         word_to_id: dict[str, int],
         id_to_word: dict[int, str],
         embedding_dim: int,
-        learning_rate: float = 0.01,
         seed: int = 42,
     ) -> None:
         self.word_to_id = word_to_id.copy()
         self.id_to_word = id_to_word.copy()
         self.embedding_dim = embedding_dim
-        self.learning_rate = learning_rate
         self.rng = np.random.default_rng(seed)
 
         self.vocab_size = len(self.word_to_id)
@@ -150,7 +148,9 @@ class Word2Vec:
         self,
         train_pairs: list[tuple[int, int]],
         val_pairs: list[tuple[int, int]],
-        epochs: int = 100,
+        epochs: int,
+        batch_size: int = 128,
+        learning_rate: float = 0.01,
         restore_best_weights: bool = False,
     ) -> tuple[list[float], list[float]]:
         """Train embeddings and return train and validation loss histories.
@@ -158,6 +158,8 @@ class Word2Vec:
         Training loss is averaged during each epoch as weights are updated.
         Validation loss is computed using the weights at the end of each epoch.
         """
+        train_pairs_array = np.asarray(train_pairs, dtype=np.intp)
+
         train_loss_history: list[float] = []
         val_loss_history: list[float] = []
 
@@ -165,34 +167,8 @@ class Word2Vec:
         best_embeddings = None
 
         for _ in range(epochs):
-            total_loss = 0.0
-
-            # Shuffle each epoch to help converge more reliably
-            # Helps minimize effects from repeatedly updating on pairs in the same order
-            pair_order = self.rng.permutation(len(train_pairs))
-
-            for i in pair_order:
-                center_id, context_id = train_pairs[i]
-
-                # Forward pass
-                center_vector = self.input_embeddings[center_id]
-                scores = self._context_scores(center_id)
-                probabilities = self._softmax(scores)
-
-                # Record loss
-                total_loss += self._cross_entropy(scores, context_id)
-
-                # Calculate gradients
-                center_gradient, output_gradients = self._backward(
-                    probabilities, context_id, center_vector
-                )
-
-                # Gradient descent update
-                self.input_embeddings[center_id] -= self.learning_rate * center_gradient
-                self.output_embeddings -= self.learning_rate * output_gradients
-
-            train_loss = total_loss / len(train_pairs)
-            val_loss = self.evaluate(val_pairs)
+            train_loss = self._train_epoch(train_pairs_array, batch_size, learning_rate)
+            val_loss = self.evaluate(val_pairs, batch_size)
 
             train_loss_history.append(train_loss)
             val_loss_history.append(val_loss)
@@ -211,15 +187,21 @@ class Word2Vec:
 
         return train_loss_history, val_loss_history
 
-    def evaluate(self, pairs: list[tuple[int, int]]) -> float:
-        """Return average cross-entropy for given pairs."""
+    def evaluate(self, pairs: list[tuple[int, int]], batch_size: int = 128) -> float:
+        """Return average cross-entropy for the given pairs."""
+        pairs_array = np.asarray(pairs, dtype=np.intp)
+        split_points = range(batch_size, len(pairs_array), batch_size)
+        batches = np.split(pairs_array, split_points)
+
         total_loss = 0.0
+        for batch in batches:
+            center_ids, context_ids = batch.T
+            center_vectors = self.input_embeddings[center_ids]
+            scores = self._context_scores(center_vectors)
+            losses = self._cross_entropy(scores, context_ids)
+            total_loss += float(losses.sum(dtype=np.float64))
 
-        for center_id, context_id in pairs:
-            scores = self._context_scores(center_id)
-            total_loss += self._cross_entropy(scores, context_id)
-
-        return total_loss / len(pairs)
+        return total_loss / len(pairs_array)
 
     def cosine_similarity(self, word_a: str, word_b: str) -> float:
         """Return cosine similarity between two words' input embeddings."""
@@ -247,7 +229,7 @@ class Word2Vec:
     def predict_context(self, center_word: str, k: int = 5) -> list[tuple[str, float]]:
         """Return k (context word, probability) pairs, highest probability first."""
         center_id = self.word_to_id[center_word]
-        scores = self._context_scores(center_id)
+        scores = self._context_scores(self.input_embeddings[center_id])
         probabilities = self._softmax(scores)
         top_ids = np.argsort(-scores)[:k]
 
@@ -256,8 +238,88 @@ class Word2Vec:
             word = self.id_to_word[word_id]
             probability = float(probabilities[word_id])
             predictions.append((word, probability))
-
         return predictions
+
+    def _train_epoch(
+        self, pair_ids: NDArray[np.intp], batch_size: int, learning_rate: float
+    ) -> float:
+        """Shuffle and train one pass and return mean loss."""
+        # Shuffle pairs before batching to vary their order and grouping each epoch
+        shuffled_pairs = self.rng.permutation(pair_ids, axis=0)
+
+        split_points = range(batch_size, len(shuffled_pairs), batch_size)
+        batches = np.split(shuffled_pairs, split_points)
+
+        total_loss = 0.0
+        for batch in batches:
+            center_ids, context_ids = batch.T
+
+            # Forward pass
+            center_vectors = self.input_embeddings[center_ids]
+
+            scores = self._context_scores(center_vectors)
+            probabilities = self._softmax(scores)
+
+            # Record loss
+            losses = self._cross_entropy(scores, context_ids)
+            total_loss += float(losses.sum(dtype=np.float64))
+
+            # Calculate gradients
+            center_gradients, output_gradients = self._backward(
+                probabilities, context_ids, center_vectors
+            )
+
+            # Gradient descent update
+            # Accumulate all updates when center ID repeats
+            np.add.at(
+                self.input_embeddings,
+                center_ids,
+                -learning_rate * center_gradients,
+            )
+            self.output_embeddings -= learning_rate * output_gradients
+
+        return total_loss / len(pair_ids)
+
+    def _context_scores(
+        self, center_vectors: NDArray[np.float32]
+    ) -> NDArray[np.float32]:
+        """Calculate context-prediction scores for one center vector or a batch."""
+        return center_vectors @ self.output_embeddings.T
+
+    @staticmethod
+    def _softmax(scores: NDArray[np.float32]) -> NDArray[np.float32]:
+        """Convert scores to probabilities along vocab axis."""
+        shifted = scores - scores.max(axis=-1, keepdims=True)
+        weights = np.exp(shifted)
+        probabilities = weights / weights.sum(axis=-1, keepdims=True)
+        return probabilities.astype(np.float32, copy=False)
+
+    @staticmethod
+    def _cross_entropy(
+        scores: NDArray[np.float32], context_ids: NDArray[np.intp]
+    ) -> NDArray[np.float32]:
+        """Calculate cross-entropy loss for each pair in a batch."""
+        shifted = scores - scores.max(axis=1, keepdims=True)
+        log_normalizers = np.log(np.exp(shifted).sum(axis=1))
+        rows = np.arange(len(context_ids))
+        losses = log_normalizers - shifted[rows, context_ids]
+        return losses
+
+    def _backward(
+        self,
+        probabilities: NDArray[np.float32],
+        context_ids: NDArray[np.intp],
+        center_vectors: NDArray[np.float32],
+    ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+        """Return gradients for the mean batch loss."""
+        score_gradients = probabilities.copy()
+        rows = np.arange(len(context_ids))
+        score_gradients[rows, context_ids] -= 1.0
+        score_gradients /= len(context_ids)
+
+        center_gradients = score_gradients @ self.output_embeddings
+        output_gradients = score_gradients.T @ center_vectors
+        return center_gradients, output_gradients
 
     def _initialize_embeddings(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
         """Create input and output embedding matrices with random values."""
@@ -267,46 +329,4 @@ class Word2Vec:
         output_embeddings = self.rng.normal(
             loc=0.0, scale=0.1, size=(self.vocab_size, self.embedding_dim)
         ).astype(np.float32)
-
         return input_embeddings, output_embeddings
-
-    def _context_scores(self, center_id: int) -> NDArray[np.float32]:
-        """Calculate context-prediction score for every vocabulary word."""
-        center_vector = self.input_embeddings[center_id]
-        scores = self.output_embeddings @ center_vector
-
-        return scores
-
-    @staticmethod
-    def _softmax(scores: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Convert a 1d array of scores into probabilities."""
-        shifted = scores - np.max(scores)
-        weights = np.exp(shifted)
-        probabilities = weights / np.sum(weights)
-
-        return probabilities
-
-    @staticmethod
-    def _cross_entropy(scores: NDArray[np.float32], context_id: int) -> float:
-        """Calculate cross-entropy loss from scores and the target context ID."""
-        # Calculate using scores to avoid ln(0) = undefined
-        shifted = scores - np.max(scores)
-        weights = np.exp(shifted)
-        loss = np.log(np.sum(weights)) - shifted[context_id]
-
-        return float(loss)
-
-    def _backward(
-        self,
-        probabilities: NDArray[np.float32],
-        context_id: int,
-        center_vector: NDArray[np.float32],
-    ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-        """Return gradients for the center vector and output embedding matrix."""
-        score_gradients = probabilities.copy()
-        score_gradients[context_id] -= 1.0
-
-        output_gradients = np.outer(score_gradients, center_vector)
-        center_gradient = self.output_embeddings.T @ score_gradients
-
-        return center_gradient, output_gradients

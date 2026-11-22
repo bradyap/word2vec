@@ -6,6 +6,7 @@ dependencies = [
     "matplotlib>=3.11.2",
     "nltk>=3.10.3",
     "numpy>=2.5.3",
+    "threadpoolctl>=3.8.0",
 ]
 
 [dependency-groups]
