@@ -110,8 +110,14 @@ def generate_pairs(
     return pairs
 
 
-def pca_2d(vectors: NDArray[np.float32]) -> NDArray[np.float32]:
-    """Return 2d PCA coordinates for each word vector."""
+def pca_2d(
+    vectors: NDArray[np.float32], normalize: bool = False
+) -> NDArray[np.float32]:
+    """Return 2d PCA coordinates for each word vector, optionally scaling each vector to length 1."""
+    if normalize:
+        lengths = np.linalg.norm(vectors, axis=1, keepdims=True)
+        vectors = vectors / lengths
+
     centered = vectors - vectors.mean(axis=0)
     _, _, directions = np.linalg.svd(centered, full_matrices=False)
     axes = directions[:2].T
