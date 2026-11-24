@@ -102,6 +102,7 @@ def generate_pairs(
                 context_word = sentence[context_pos]
                 context_id = word_to_id.get(context_word)
 
+                # Out-of-vocab words still count toward distance between words
                 if context_id is None:
                     continue
 
@@ -120,6 +121,7 @@ def pca_2d(
 
     centered = vectors - vectors.mean(axis=0)
     _, _, directions = np.linalg.svd(centered, full_matrices=False)
+    # First two rows are directions of greatest variance, transpose them for projection
     axes = directions[:2].T
     return (centered @ axes).astype(np.float32)
 
@@ -258,7 +260,7 @@ class Word2Vec:
             scores = self._context_scores(center_vectors)
             probabilities = self._softmax(scores)
 
-            # Record loss
+            # Sum per-pair losses so each pair counts equally, even in a short final batch
             losses = self._cross_entropy(scores, context_ids)
             total_loss += float(losses.sum(dtype=np.float64))
 
@@ -268,7 +270,7 @@ class Word2Vec:
             )
 
             # Gradient descent update
-            # Accumulate all updates when center ID repeats
+            # np.add.at applies every update when pairs share the same center word
             np.add.at(
                 self.input_embeddings,
                 center_ids,
@@ -287,6 +289,7 @@ class Word2Vec:
     @staticmethod
     def _softmax(scores: NDArray[np.float32]) -> NDArray[np.float32]:
         """Convert scores to probabilities along vocab axis."""
+        # Subtracting the max preserves probabilities and prevents exp from overflowing
         shifted = scores - scores.max(axis=-1, keepdims=True)
         weights = np.exp(shifted)
         probabilities = weights / weights.sum(axis=-1, keepdims=True)
@@ -297,6 +300,7 @@ class Word2Vec:
         scores: NDArray[np.float32], context_ids: NDArray[np.intp]
     ) -> NDArray[np.float32]:
         """Calculate cross-entropy loss for each pair in a batch."""
+        # Calc loss directly from scores, a tiny softmaxed probability can round to zero
         shifted = scores - scores.max(axis=1, keepdims=True)
         log_normalizers = np.log(np.exp(shifted).sum(axis=1))
         rows = np.arange(len(context_ids))
@@ -310,6 +314,7 @@ class Word2Vec:
         center_vectors: NDArray[np.float32],
     ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
         """Return gradients for the mean batch loss."""
+        # For each pair, the score gradient is predicted probabilities - one-hot target
         score_gradients = probabilities.copy()
         rows = np.arange(len(context_ids))
         score_gradients[rows, context_ids] -= 1.0
